@@ -21,7 +21,6 @@ RANDOM_SEED = 42
 MULTI_RUN_ATTEMPTS = 12
 RESULT_FILE = "populacaofinal.xlsx"
 DASHBOARD_FILE = "dashboard.html"
-TEMPLATE_FILE = "modelo_apresentacoes.csv"
 TOP_SOLUTIONS = 30
 
 @dataclass(frozen=True, order=True)
@@ -169,7 +168,7 @@ def load_professor_availability(workbook_path: Path) -> dict[str, set[Slot]]:
 
 
 def load_presentations(workbook_path: Path, fallback_count: int) -> tuple[list[Presentation], bool]:
-    # Tenta localizar uma aba de apresentacoes. Se nao houver, gera alunos ficticios.
+    # Tenta localizar uma aba de apresentacoes. Se nao houver, apresenta erro ao usuario.
     excel = pd.ExcelFile(workbook_path)
     valid_aliases = {
         "Aluno",
@@ -208,10 +207,11 @@ def load_presentations(workbook_path: Path, fallback_count: int) -> tuple[list[P
         if presentations:
             return presentations, False
 
-    generated = [
-        Presentation(aluno=f"Aluno {index:02d}") for index in range(1, fallback_count + 1)
-    ]
-    return generated, True
+    raise ValueError(
+        "Nenhuma aba de apresentacoes encontrada no arquivo. "
+        "Por favor, crie uma aba com uma coluna 'Aluno' (ou 'Aluna', 'Nome', 'Discente', 'Estudante') "
+        "e opcionalmente uma coluna 'Orientador'."
+    )
 
 
 def build_candidate_lists(
@@ -452,10 +452,6 @@ def mutate(
     return repair_individual(mutated, feasible_slots, candidates_by_slot, all_professors, rng)
 
 
-def is_extreme_slot(slot: Slot) -> bool:
-    # Penaliza horarios considerados menos confortaveis.
-    return slot.horario in {"07:00-09:00", "19:00-21:00"}
-
 
 def compute_penalty(
     individual: list[Assignment],
@@ -490,11 +486,11 @@ def compute_penalty(
 
         assignments_by_slot.setdefault(assignment.slot, []).append(assignment)
 
-        # Penalidade Média: orientador não deve participar da própria banca.
+        # Penalidade Grave: orientador não deve participar da própria banca.
         if assignment.apresentacao.orientador and assignment.apresentacao.orientador in professores:
             penalty += PENALTY_WEIGHTS.soft_orientador_na_banca
 
-        # Penalidade Média: priorizar horário noturno.
+        # Penalidade baixa: priorizar horário noturno.
         if not is_night_slot(assignment.slot):
             penalty += PENALTY_WEIGHTS.soft_prioridade_noite
 
@@ -505,7 +501,7 @@ def compute_penalty(
                 PENALTY_WEIGHTS.hard_professor_em_duas_bancas_no_mesmo_horario * (count - 1)
             )
 
-    # Penalidades super baixa: intervalo entre bancas e sequencia de bancos para cada professor.
+    # Penalidades baixa: intervalo entre bancas e sequencia de bancos para cada professor.
     for professor, slots in assignments_by_professor.items():
         ordered_slots = sorted(slots, key=lambda slot: parse_slot_interval(slot)[0])
         consecutive_count = 1
@@ -528,7 +524,7 @@ def compute_penalty(
 
             previous_slot = current_slot
 
-    # Penalidade super baixa: duas bancas no mesmo horário, mesmo com professores/alunos distintos.
+    # Penalidade baixa: duas bancas no mesmo horário, mesmo com professores/alunos distintos.
     for slot, assignments in assignments_by_slot.items():
         if len(assignments) > 1:
             penalty += (len(assignments) - 1) * PENALTY_WEIGHTS.soft_parallel_bancas
@@ -950,23 +946,6 @@ def export_results(
     return result_path
 
 
-def export_template_if_needed(workbook_path: Path, used_demo_presentations: bool) -> Path | None:
-    # Gera um modelo simples de alunos quando a planilha original nao traz apresentacoes.
-    if not used_demo_presentations:
-        return None
-
-    template_path = workbook_path.with_name(TEMPLATE_FILE)
-    template_df = pd.DataFrame(
-        [
-            {"Aluno": "Aluno 01", "Orientador": "Professor Exemplo"},
-            {"Aluno": "Aluno 02", "Orientador": "Professor Exemplo"},
-            {"Aluno": "Aluno 03", "Orientador": "Professor Exemplo"},
-        ]
-    )
-    template_df.to_csv(template_path, index=False, encoding="utf-8-sig")
-    return template_path
-
-
 def build_dashboard(
     workbook_path: Path,
     ranked_solutions: list[RankedSolution],
@@ -1200,30 +1179,7 @@ def main() -> None:
         used_demo_presentations,
         max_simultaneous,
     )
-    template_path = export_template_if_needed(workbook_path, used_demo_presentations)
-    dashboard_path = build_dashboard(
-        workbook_path,
-        ranked_solutions,
-        best_penalty,
-        best_fitness,
-        len(best_schedule),
-        availability,
-        best_seed,
-        best_execution,
-    )
-    webbrowser.open(dashboard_path.resolve().as_uri())
 
-    print(f"Arquivo analisado: {workbook_path.name}")
-    print(f"Apresentacoes agendadas: {len(best_schedule)}")
-    print(f"Melhor resultado obtido na tentativa: {best_execution}")
-    print(f"Fitness final: {best_fitness}")
-    print(f"Resultado salvo em: {result_path}")
-    print(f"Dashboard salva em: {dashboard_path}")
-    if template_path:
-        print(
-            "Nao foi encontrada uma lista de apresentacoes na planilha. "
-            f"Foi criado um modelo em: {template_path}"
-        )
     if max_simultaneous < 3:
         print(
             "Aviso: os dados atuais nao permitem 3 professores no mesmo horario. "
