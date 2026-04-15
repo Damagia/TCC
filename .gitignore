@@ -18,6 +18,8 @@ env/
 .vscode/
 
 # Excel / output files
+populacaofinal.xlsx
+populacaoinicial.xlsx
 *.xlsx
 *.xls
 *.csv
